@@ -1,5 +1,5 @@
-python-telegram-bot==20.7
+python-telegram-bot
 openai-whisper
-googletrans==4.0.0-rc1
+googletrans
 ffmpeg-python
 torch
