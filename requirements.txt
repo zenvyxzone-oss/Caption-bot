@@ -1,5 +1,5 @@
-python-telegram-bot
 openai-whisper
+python-telegram-bot
 googletrans
-ffmpeg-python
-torch
+setuptools
+
