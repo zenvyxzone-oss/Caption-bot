@@ -2,103 +2,69 @@ import whisper
 import subprocess
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    CommandHandler,
-    CallbackQueryHandler,
-    filters,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 from googletrans import Translator
 
-# --- AAPKA TOKEN ---
-TOKEN = "8636371592:AAHffOoYiJ0bCcx1lAq5Yh67i-zrgwDh0cg"
+# Token Railway Variables se uthayega
+TOKEN = os.getenv("BOT_TOKEN", "8636371592:AAHffOoYiJ0bCcx1lAq5Yh67i-zrgwDh0cg")
 
-# Model loading
-print("Loading Whisper Model...")
-model = whisper.load_model("base")
+print("Loading Model...")
+model = whisper.load_model("tiny") # Tiny model is best for Railway free tier
 translator = Translator()
 
-user_video = {}
-
-# Time formatter for SRT
 def format_time(ti):
-    h = int(ti // 3600)
-    m = int((ti % 3600) // 60)
-    s = int(ti % 60)
+    h, m, s = int(ti//3600), int((ti%3600)//60), int(ti%60)
     ms = int((ti - int(ti)) * 1000)
     return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Video bhejo → language select karo → subtitle ready 🎬")
+    await update.message.reply_text("👋 Video bhejein, main auto-subtitle add kar dunga!")
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    msg = await update.message.reply_text("📥 Video download ho rahi hai...")
+    msg = await update.message.reply_text("📥 Downloading video...")
     
     file = await update.message.video.get_file()
-    video_path = f"video_{user_id}.mp4"
-    await file.download_to_drive(video_path)
+    v_path = f"{user_id}.mp4"
+    await file.download_to_drive(v_path)
     
-    user_video[user_id] = video_path
-
     keyboard = [[
-        InlineKeyboardButton("English 🇺🇸", callback_data="en"),
-        InlineKeyboardButton("Hindi 🇮🇳", callback_data="hi")
+        InlineKeyboardButton("English 🇺🇸", callback_data=f"en_{user_id}"),
+        InlineKeyboardButton("Hindi 🇮🇳", callback_data=f"hi_{user_id}")
     ]]
-    await msg.edit_text("🌐 Subtitle ki language chunein:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await msg.edit_text("🌐 Subtitle language choose karein:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    user_id = query.from_user.id
-    video_path = user_video.get(user_id)
-    srt_path = f"sub_{user_id}.srt"
-    out_path = f"out_{user_id}.mp4"
+    lang, u_id = query.data.split("_")
+    v_path, s_path, o_path = f"{u_id}.mp4", f"{u_id}.srt", f"out_{u_id}.mp4"
 
-    if not video_path or not os.path.exists(video_path):
-        await query.message.reply_text("❌ File nahi mili, dobara try karein.")
+    if not os.path.exists(v_path):
+        await query.message.reply_text("❌ File nahi mili!")
         return
 
-    status = await query.message.reply_text("⏳ Processing shuru... (Isme 1-2 minute lag sakte hain)")
+    m = await query.message.reply_text("⏳ Processing... (Whisper is working)")
 
     try:
-        # Step 1: Transcribe
-        await status.edit_text("✍️ Awaaz ko text mein badla ja raha hai...")
-        result = model.transcribe(video_path)
-        
-        # Step 2: Create SRT
-        await status.edit_text("📝 Subtitles file ban rahi hai...")
-        with open(srt_path, "w", encoding="utf-8") as f:
+        result = model.transcribe(v_path)
+        with open(s_path, "w", encoding="utf-8") as f:
             for i, seg in enumerate(result["segments"]):
-                t = seg["text"].strip()
-                if query.data == "hi":
-                    try:
-                        t = translator.translate(t, dest="hi").text
+                txt = seg["text"].strip()
+                if lang == "hi":
+                    try: txt = translator.translate(txt, dest="hi").text
                     except: pass
-                
-                f.write(f"{i+1}\n{format_time(seg['start'])} --> {format_time(seg['end'])}\n{t}\n\n")
+                f.write(f"{i+1}\n{format_time(seg['start'])} --> {format_time(seg['end'])}\n{txt}\n\n")
 
-        # Step 3: Burn subtitles with FFmpeg
-        await status.edit_text("🎬 Video render ho rahi hai...")
-        subprocess.run([
-            "ffmpeg", "-y", "-i", video_path,
-            "-vf", f"subtitles={srt_path}",
-            out_path
-        ], check=True)
-
-        # Step 4: Send Video
-        await query.message.reply_video(video=open(out_path, "rb"), caption="✅ Done!")
-
+        await m.edit_text("🎬 Rendering subtitles into video...")
+        subprocess.run(["ffmpeg", "-y", "-i", v_path, "-vf", f"subtitles={s_path}", o_path], check=True)
+        
+        await query.message.reply_video(video=open(o_path, "rb"), caption="✅ Subtitles Added!")
     except Exception as e:
-        await query.message.reply_text(f"❌ Error aaya: {str(e)}")
-    
+        await query.message.reply_text(f"❌ Error: {e}")
     finally:
-        # Sab kuch saaf (cleanup) karein
-        await status.delete()
-        for f in [video_path, srt_path, out_path]:
+        for f in [v_path, s_path, o_path]:
             if os.path.exists(f): os.remove(f)
 
 if __name__ == "__main__":
@@ -106,6 +72,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.VIDEO, handle_video))
     app.add_handler(CallbackQueryHandler(button_handler))
-    print("Bot is running! 🚀")
+    print("Bot is LIVE! 🚀")
     app.run_polling()
     
